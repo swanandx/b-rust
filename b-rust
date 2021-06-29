@@ -1,0 +1,122 @@
+#!/bin/bash
+
+###################################
+# Bash script for Rust playground #
+#                  ~ by swanandx  #
+###################################
+
+Help()
+{
+   echo "Syntax: $0 -f {filename} [options]"
+   echo "options:"
+   echo "c     channel [stable(default) || beta || nightly]"
+   echo "m     mode [debug(default) || release]"
+   echo "e     edition [2018(default) || 2021 || 2015]"
+   echo "h     Help menu"
+   echo
+}
+
+generate_post_data()
+{
+  cat <<EOF
+{
+  "channel":"$channel",
+  "mode":"$mode",
+  "edition":"$edition",
+  "crateType":"bin",
+  "tests":false,
+  "code":$code,
+  "backtrace":false
+}
+EOF
+}
+
+#default config
+channel="stable"
+mode="debug"
+edition="2018"
+
+
+# Command line arguments
+while getopts ":c:m:e:f:h" flag
+do
+    case "${flag}" in
+        c) if [[ ${OPTARG} == "stable" || ${OPTARG} == "beta" || ${OPTARG} == "nightly" ]];then
+			channel=${OPTARG}
+		else
+			echo -e "\033[0;31m[-] Invalid channel ${OPTARG} \033[0m"
+			echo "Run $0 -h for more info."
+			exit 1
+		fi;;
+        m) if [[ ${OPTARG} == "debug" || ${OPTARG} == "release" ]];then
+			mode=${OPTARG}
+		else
+			echo -e "\033[0;31m[-] Invalid mode ${OPTARG} \033[0m"
+			echo "Run $0 -h for more info."
+			exit 1
+		fi;;
+        e) if [[ ${OPTARG} == "2018" || ${OPTARG} == "2015" || ${OPTARG} == "2021" ]];then
+			edition=${OPTARG}
+		else
+			echo -e "\033[0;31m[-] Invalid edition ${OPTARG} \033[0m"
+			echo "Run $0 -h for more info."
+			exit 1
+		fi;;
+		f) filename=${OPTARG} ;;
+		h) Help
+			exit;;
+		:) echo -e "\033[0;31m[-] Error: -${OPTARG} requires an argument\033[0m"
+			echo "syntax: $0 -f {filename} [options]"
+			echo "Run $0 -h for more info."
+			exit 1
+			;;
+		\?) echo -e "\033[0;31m[-] Invalid argument $OPTARG \033[0m"
+			echo "syntax: $0 -f {filename} [options]"
+			echo "Run $0 -h for more info."
+			exit 1;;
+    esac
+done
+
+# file checks
+if [ -z "$filename" ];then
+	echo -e "\033[0;31m[-] Missing -f {filename}\033[0m" >&2
+	echo "syntax: $0 -f {filename} [options]"
+	echo "Run $0 -h for more info."
+	exit 1
+fi
+
+if [[ ! -f "$filename" ]]; then
+	echo -e "\033[0;31m[-] $filename file doesn't exists.\033[0m" >&2
+	exit 1
+elif ! file -ib $filename | grep -q ^text ; then
+	echo -e "\033[0;31m[-] $filename file isn't a text file.\033[0m" >&2
+	exit 1
+elif [[ ! $filename =~ \.rs$ ]]; then
+	echo -e "\033[0;31m[-] $filename file doesn't have .rs extension.\033[0m" >&2
+	exit 1
+fi
+
+#jq check
+if ! type jq > /dev/null 2>&1; then
+  echo -e >&2 "\033[0;31m[-] Required\033[0m jq \033[0;31mbut it's not installed. Aborting.\033[0m"
+  exit 1
+fi
+
+#check internet connection
+if ! ping -q -c 1 -W 1 8.8.8.8 >/dev/null;then
+	echo -e >&2 "\033[0;31m[-] Required internet connection. Aborting.\033[0m"
+  exit 1
+fi
+
+#driver code
+code=$(jq -R -s -c < $filename)
+
+resp=$(curl -X POST -H "Content-Type: application/json" 'https://play.rust-lang.org/execute' --data-raw "$(generate_post_data)" --compressed --silent)
+
+status=$(echo $resp | jq .success)
+
+if [[ $status == true ]]; then
+	echo -ne $(echo $resp | grep -Po '"stdout":"\K[^"]*')
+else
+	echo -ne $(echo $resp | grep -Po '"stderr":"\K[^"]*')
+fi
